@@ -1,0 +1,2 @@
+AWS_ACCOUNT=AWSのアカウントID
+AWS_REGION=AWSのリージョン
