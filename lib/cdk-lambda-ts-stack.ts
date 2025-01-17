@@ -29,6 +29,7 @@ export class CdkLambdaTsStack extends cdk.Stack {
       timeout: cdk.Duration.seconds(30), // タイムアウトの指定(30秒)
     });
 
+    // Lambdaに権限を追加
     bucket.grantPut(resizeLambda); // resizeLambdaにバケットへのPut権限を付与
     bucket.grantReadWrite(resizeLambda); // resizeLambdaにバケットへの読み書き権限を付与
 
@@ -37,8 +38,6 @@ export class CdkLambdaTsStack extends cdk.Stack {
       s3.EventType.OBJECT_CREATED, // イベントの種類をオブジェクト作成時に指定
       new LambdaDestination(resizeLambda), // イベント発生時に起動するLambda関数を指定
       { prefix: 'original/' }, // original/ で始まるオブジェクトが作成された場合にイベントを発生させる(フォルダ作成時もイベントが発生する)
-      // Lambdaに権限を追加
-
     )
   }
 }
