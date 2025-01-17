@@ -1,53 +1,30 @@
 import { S3Handler, SQSHandler, S3Event } from 'aws-lambda';
-import { 
-    S3Client, 
-    GetObjectCommand, 
-    GetObjectCommandInput,
-    PutObjectCommand,
-    PutObjectCommandInput,
-} from '@aws-sdk/client-s3';
-import jimp from 'jimp';
+import { S3Client } from '@aws-sdk/client-s3';
 import path from 'path';
+import { getImageFromS3, putImageToS3 } from '../../common/src/index';
+import { S3Message } from '../../common/src/types';
+import { SendMessageCommand, SendMessageCommandInput, SQSClient } from '@aws-sdk/client-sqs';
 
-const DIRECTORY = 'resize';
+const PROCESS = 'resize';
+const QUEUE_URL = process.env.QUEUE_URL;
 
 export const handler: S3Handler = async (event: S3Event) => {
+    // null, 2は整形のための引数
+    console.log(`Event: ${JSON.stringify(event, null, 2)}`);
+
     const s3Client = new S3Client();
 
     for (const record of event.Records) {
+
         // 1. ダウンロード処理
 
         const bucketName = record.s3.bucket.name;
         const key = record.s3.object.key;
 
-        // パースしたキー
-        const parsedKey = path.parse(key);
-
-        // ダウンロードするための入力
-        const input: GetObjectCommandInput = {
-            Bucket: bucketName,
-            Key: key,
-        }
-
-        console.log(`downloading from s3://$(bucketName)/$(key)`);
-
-        // ダウンロードするためのコマンド
-        const command = new GetObjectCommand(input);
-        // ダウンロード結果を取得(非同期)
-        const result = await s3Client.send(command);
-
-        // ダウンロード結果がない場合はエラー
-        if (! result.Body) {
-            throw Error('result.Body is undefined !');
-        }
-
-        // Bodyからデータを取り出す(非同期)
-        const body = await result.Body.transformToByteArray();
-        console.log(body);
+        // 画像ファイルをS3からダウンロード
+        const image = await getImageFromS3(s3Client, bucketName, key);
 
         // 2. リサイズ処理
-        const bodyBuffer = Buffer.from(body); // バイトアレイをバッファに変換
-        const image = await jimp.read(bodyBuffer); // 画像の読み込み
 
         const width = image.getWidth(); // 画像の幅
         const height = image.getHeight(); // 画像の高さ
@@ -55,7 +32,7 @@ export const handler: S3Handler = async (event: S3Event) => {
     
         const resizedWidth = Math.floor(width / 2);
         const resizedHeight = Math.floor(height / 2);
-        console.log(`resize: (${resizedWidth}, ${resizedHeight})`);
+        console.log(`${PROCESS}: (${resizedWidth}, ${resizedHeight})`);
     
         image.resize(resizedWidth, resizedHeight); // リサイズ
     
@@ -66,22 +43,36 @@ export const handler: S3Handler = async (event: S3Event) => {
         // 入力のBodyに指定するイメージバッファの取得
         const imageBuffer = await image.getBufferAsync(mime);
 
-        const uploadKey = `${DIRECTORY}/${parsedKey.name}-resize${parsedKey.ext}` // パースしたキーからファイル名を生成
-        // ファイルをアップロードするための入力
-        const putInput: PutObjectCommandInput = {
-            Bucket: bucketName,
-            Key: uploadKey,
-            Body: imageBuffer,
+        // パースしたキー
+        const parsedKey = path.parse(key);
+
+        // パースしたキーからファイル名を生成
+        const uploadKey = `${PROCESS}/${parsedKey.name}-${PROCESS}${parsedKey.ext}`
+        
+        //  ファイルをS3にアップロード
+        await putImageToS3(s3Client, bucketName, uploadKey, imageBuffer);
+
+        // 4. SQSにメッセージを送信
+        // bucketNameとuploadKeyをSQSに送信
+        const s3Message: S3Message = {bucketName, key: uploadKey};
+
+        // SQSクライアント
+        const sqsClient = new SQSClient();
+
+        // SQSコマンドの入力
+        const input: SendMessageCommandInput = {
+            QueueUrl: QUEUE_URL,
+            MessageBody: JSON.stringify(s3Message)
         };
 
-        console.log(`uploading to s3://${bucketName}/${uploadKey}`);
-        // ファイルをアップロードするためのコマンド
-        const putCommand = new PutObjectCommand(putInput);
+        // SQSコマンド
+        const command: SendMessageCommand = new SendMessageCommand(input);
 
-        // ファイルをアップロードする(非同期)
-        const uploadResult = await s3Client.send(putCommand);
+        // SQSメッセージの送信
+        await sqsClient.send(command);
 
-        console.log(uploadResult);
+        console.log(`sent the message to SQS, message: ${JSON.stringify(s3Message)}`);
+
     }
 
 }
