@@ -1,7 +1,15 @@
 import { S3Handler, SQSHandler, S3Event } from 'aws-lambda';
-import { S3Client, GetObjectCommand, GetObjectCommandInput } from '@aws-sdk/client-s3';
+import { 
+    S3Client, 
+    GetObjectCommand, 
+    GetObjectCommandInput,
+    PutObjectCommand,
+    PutObjectCommandInput,
+} from '@aws-sdk/client-s3';
 import jimp from 'jimp';
+import path from 'path';
 
+const DIRECTORY = 'resize';
 
 export const handler: S3Handler = async (event: S3Event) => {
     const s3Client = new S3Client();
@@ -11,6 +19,9 @@ export const handler: S3Handler = async (event: S3Event) => {
 
         const bucketName = record.s3.bucket.name;
         const key = record.s3.object.key;
+
+        // パースしたキー
+        const parsedKey = path.parse(key);
 
         // ダウンロードするための入力
         const input: GetObjectCommandInput = {
@@ -49,7 +60,28 @@ export const handler: S3Handler = async (event: S3Event) => {
         image.resize(resizedWidth, resizedHeight); // リサイズ
     
         // 3. アップロード処理
+        // 画像のMIME(.jpg, .png, .gifなど)
+        const mime = image.getMIME();
 
+        // 入力のBodyに指定するイメージバッファの取得
+        const imageBuffer = await image.getBufferAsync(mime);
+
+        const uploadKey = `${DIRECTORY}/${parsedKey.name}-resize${parsedKey.ext}` // パースしたキーからファイル名を生成
+        // ファイルをアップロードするための入力
+        const putInput: PutObjectCommandInput = {
+            Bucket: bucketName,
+            Key: uploadKey,
+            Body: imageBuffer,
+        };
+
+        console.log(`uploading to s3://${bucketName}/${uploadKey}`);
+        // ファイルをアップロードするためのコマンド
+        const putCommand = new PutObjectCommand(putInput);
+
+        // ファイルをアップロードする(非同期)
+        const uploadResult = await s3Client.send(putCommand);
+
+        console.log(uploadResult);
     }
 
 }
