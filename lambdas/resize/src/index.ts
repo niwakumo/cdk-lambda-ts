@@ -1,9 +1,55 @@
-import { Handler, SQSHandler } from 'aws-lambda';
+import { S3Handler, SQSHandler, S3Event } from 'aws-lambda';
+import { S3Client, GetObjectCommand, GetObjectCommandInput } from '@aws-sdk/client-s3';
+import jimp from 'jimp';
 
 
-export const handler: Handler = (event) => {
-    console.log('invoked');
-    console.log('%o', event);
+export const handler: S3Handler = async (event: S3Event) => {
+    const s3Client = new S3Client();
 
+    for (const record of event.Records) {
+        // 1. ダウンロード処理
+
+        const bucketName = record.s3.bucket.name;
+        const key = record.s3.object.key;
+
+        // ダウンロードするための入力
+        const input: GetObjectCommandInput = {
+            Bucket: bucketName,
+            Key: key,
+        }
+
+        console.log(`downloading from s3://$(bucketName)/$(key)`);
+
+        // ダウンロードするためのコマンド
+        const command = new GetObjectCommand(input);
+        // ダウンロード結果を取得(非同期)
+        const result = await s3Client.send(command);
+
+        // ダウンロード結果がない場合はエラー
+        if (! result.Body) {
+            throw Error('result.Body is undefined !');
+        }
+
+        // Bodyからデータを取り出す(非同期)
+        const body = await result.Body.transformToByteArray();
+        console.log(body);
+
+        // 2. リサイズ処理
+        const bodyBuffer = Buffer.from(body); // バイトアレイをバッファに変換
+        const image = await jimp.read(bodyBuffer); // 画像の読み込み
+
+        const width = image.getWidth(); // 画像の幅
+        const height = image.getHeight(); // 画像の高さ
+        console.log(`original size: (${width}, ${height})`);
+    
+        const resizedWidth = Math.floor(width / 2);
+        const resizedHeight = Math.floor(height / 2);
+        console.log(`resize: (${resizedWidth}, ${resizedHeight})`);
+    
+        image.resize(resizedWidth, resizedHeight); // リサイズ
+    
+        // 3. アップロード処理
+
+    }
 
 }
